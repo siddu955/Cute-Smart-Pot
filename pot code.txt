@@ -1,0 +1,388 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include<Servo.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+#define TOUCH_PIN 2
+#define MOISTURE_PIN A0
+#define DRY_THRESHOLD 600   // adjust after testing
+#define SERVO_PIN 9
+#define AUTO_INTERVAL 420000UL
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// ---------- GLOBAL ----------
+int emotion = 0;
+unsigned long lastTouch = 0;
+
+bool blinkNow = false;
+unsigned long blinkTimer = 0;
+unsigned long blinkDuration = 120;
+
+int bounce = 0;
+int gaze = 0;
+int mouthWiggle = 0;
+
+Servo headServo;
+
+float servoPos = 90;      // current position
+float targetPos = 90;     // where servo wants to go
+unsigned long servoTimer = 0;
+
+// ---------- TOUCH OVERRIDE ----------
+bool touchOverride = false;
+int touchEmotion = -1;
+
+unsigned long touchStartTime = 0;
+unsigned long touchDuration = 0;
+
+// ---------- RANDOM EMOTION ----------
+int autoEmotion = 0;
+unsigned long autoTimer = 0;
+
+
+// Moisture logic
+bool isDry = false;
+bool wetCelebration = false;
+unsigned long wetStartTime = 0;
+const unsigned long WET_DURATION = 50000; // 50sec
+
+// ---------- SETUP ----------
+void setup() {
+  pinMode(TOUCH_PIN, INPUT);
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  randomSeed(analogRead(A1));
+
+  headServo.attach(SERVO_PIN);
+headServo.write(servoPos);
+
+}
+
+// ---------- LOOP ----------
+void loop() {
+
+ if (digitalRead(TOUCH_PIN) == HIGH && millis() - lastTouch > 500) {
+
+  touchOverride = true;
+  touchStartTime = millis();
+
+  // If already happy override → angry
+  if (touchEmotion == 0) {
+    touchEmotion = 2;          // angry
+    touchDuration = 20000;     // 20 sec
+  }
+  else {
+    touchEmotion = 0;          // happy
+    touchDuration = 30000;     // 30sec
+  }
+
+  lastTouch = millis();
+}
+
+if (touchOverride && millis() - touchStartTime > touchDuration) {
+  touchOverride = false;
+  touchEmotion = -1;
+}
+
+  // ---------- Moisture Read ----------
+  int moisture = analogRead(MOISTURE_PIN);
+
+  if (moisture > DRY_THRESHOLD) {   // DRY
+    isDry = true;
+    wetCelebration = false;
+  } 
+  else {                            // WET
+    if (isDry) {
+      wetCelebration = true;
+      wetStartTime = millis();
+    }
+    isDry = false;
+  }
+
+  if (!touchOverride && millis() - autoTimer > AUTO_INTERVAL) {
+  autoTimer = millis();
+
+  // Pick any emotion EXCEPT crying & cheerful
+  autoEmotion = random(0, 8); 
+}
+
+  // ---------- RANDOM BLINK ----------
+  if (!blinkNow && millis() - blinkTimer > random(2500, 6000)) {
+    blinkNow = true;
+    blinkTimer = millis();
+  }
+  if (blinkNow && millis() - blinkTimer > blinkDuration) {
+    blinkNow = false;
+  }
+
+  bounce = sin(millis() / 220.0) * 2;
+  gaze   = sin(millis() / 500.0) * 5;
+  mouthWiggle = sin(millis() / 300.0) * 1;
+
+  display.clearDisplay();
+
+  // ---------- Emotion Override ----------
+  int activeEmotion;
+
+// 1️⃣ Moisture always wins
+if (isDry) {
+  activeEmotion = 9; // crying
+}
+else if (wetCelebration) {
+  activeEmotion = 8; // cheerful
+}
+
+// 2️⃣ Touch override
+else if (touchOverride) {
+  activeEmotion = touchEmotion;
+}
+
+// 3️⃣ Normal random life
+else {
+  activeEmotion = autoEmotion;
+}
+
+  // ---------- SERVO MOTION ----------
+switch (activeEmotion) {
+
+  case 0: // Happy – light left right
+    targetPos = 90 + sin(millis() / 1200.0) * 15;
+    break;
+
+  case 1: // Curious – left 10s, right 10s
+    targetPos = (millis() / 10000 % 2 == 0) ? 65 : 115;
+    break;
+
+  case 2: // Angry – fast shake
+    targetPos = 90 + sin(millis() / 150.0) * 20;
+    break;
+
+  case 3: // Sleepy – no movement
+    targetPos = 90;
+    break;
+
+  case 4: // Sad – slow end to end
+    targetPos = 90 + sin(millis() / 2500.0) * 30;
+    break;
+
+  case 5: // Dizzy – no movement
+    targetPos = 90;
+    break;
+
+  case 6: // Butterfly – slow random chase
+    targetPos = 90 + sin(millis() / 1800.0) * 25;
+    break;
+
+  case 7: // Exhausted – no movement
+    targetPos = 90;
+    break;
+
+  case 8: // Cheerful – slow joyful rotation
+    targetPos = 90 + sin(millis() / 3000.0) * 20;
+    break;
+
+  case 9: // Crying – no rotation
+    targetPos = 90;
+    break;
+} 
+  if (isDry) {
+    activeEmotion = 9; // crying
+  }
+  else if (wetCelebration) {
+    activeEmotion = 8; // cheerful
+    if (millis() - wetStartTime > WET_DURATION) {
+      wetCelebration = false;
+    }
+  }
+
+  switch (activeEmotion) {
+    case 0: happyFace(); break;
+    case 1: curiousFace(); break;
+    case 2: angryFace(); break;
+    case 3: sleepyFace();break;
+    case 4: sadFace(); break;
+    case 5: dizzyFace(); break;
+    case 6: butterflyFace(); break;
+    case 7: exhaustedFace(); break;
+    case 8: cheerfulFace(); break;
+    case 9: cryingFace(); break;
+  }
+
+  display.display();
+  updateServoSmooth();
+  delay(30);
+}
+
+void updateServoSmooth() {
+  if (millis() - servoTimer > 20) {   // smooth update rate
+    servoTimer = millis();
+    servoPos += (targetPos - servoPos) * 0.08;  // smoothing factor
+    headServo.write(servoPos);
+  }
+}
+
+// ---------- EYES ----------
+void normalEyes(bool blink, int x = 0, int yOff = 0) {
+  int y = 26 + bounce + yOff;
+  if (!blink) {
+    display.fillCircle(38 + gaze + x, y, 4, SSD1306_WHITE);
+    display.fillCircle(82 + gaze + x, y, 4, SSD1306_WHITE);
+  } else {
+    display.drawLine(34 + x, y, 46 + x, y, SSD1306_WHITE);
+    display.drawLine(78 + x, y, 90 + x, y, SSD1306_WHITE);
+  }
+}
+
+// ---------- MOUTHS ----------
+void smileMouth(int offset) {
+  int y = 44 + offset;
+  display.drawLine(52, y, 72, y, SSD1306_WHITE);
+  display.drawLine(50, y - 1, 52, y, SSD1306_WHITE);
+  display.drawLine(72, y, 74, y - 1, SSD1306_WHITE);
+}
+
+void sadMouth(int offset) {
+  int y = 48 + offset;
+  display.drawLine(48, y, 72, y, SSD1306_WHITE);
+  display.drawLine(46, y + 1, 52, y, SSD1306_WHITE);
+  display.drawLine(68, y, 74, y + 1, SSD1306_WHITE);
+}
+
+void openMouth(int open) {
+  display.fillRoundRect(52, 44 - open / 2, 16, open, 4, SSD1306_WHITE);
+}
+void lightRain() {
+  for (int i = 0; i < 4; i++) {
+    int x = random(20, 108);
+    int y = (millis() / 50 + i * 14) % 64;
+
+    // avoid face center area
+    if (y < 20 || y > 50) {
+      display.drawLine(x, y, x,y +2,SSD1306_WHITE);
+    }
+  }
+}
+
+// ---------- FACES ----------
+void happyFace() {
+  normalEyes(blinkNow);
+  smileMouth(mouthWiggle);
+}
+
+void curiousFace() {
+  normalEyes(blinkNow);
+  int open =9;
+  openMouth(open); // big curious mouth 😮
+}
+
+void angryFace() {
+  int shakeX = sin(millis() / 60.0) * 2;
+  int shakeY = cos(millis() / 70.0) * 1;
+
+  normalEyes(blinkNow, shakeX, shakeY);
+  sadMouth(mouthWiggle + shakeY);
+
+  display.drawLine(36 + shakeX, 20 + shakeY, 48 + shakeX, 26 + shakeY, SSD1306_WHITE);
+  display.drawLine(92 + shakeX, 20 + shakeY, 80 + shakeX, 26 + shakeY, SSD1306_WHITE);
+}
+
+void sadFace() {
+  normalEyes(blinkNow);
+  sadMouth(mouthWiggle);
+}
+
+void sleepyFace() {
+  int open = abs(sin(millis() / 600.0)) * 10;
+
+  
+    display.drawLine(38, 26, 46, 26, SSD1306_WHITE);
+    display.drawLine(82, 26, 90, 26, SSD1306_WHITE);
+  
+
+  openMouth(open);
+
+  int bubbleY = 48 - (millis() / 120 % 20);
+  display.drawCircle(94, bubbleY, 3, SSD1306_WHITE);
+}
+
+void dizzyFace() {
+  int wobble = sin(millis() / 200.0) * 2;
+
+  // Thick X eyes
+  display.drawLine(37 + wobble, 22, 45 + wobble, 30, SSD1306_WHITE);
+  display.drawLine(37 + wobble, 30, 45 + wobble, 22, SSD1306_WHITE);
+  display.drawLine(38 + wobble, 22, 46 + wobble, 30, SSD1306_WHITE);
+
+  display.drawLine(77 + wobble, 22, 85 + wobble, 30, SSD1306_WHITE);
+  display.drawLine(77 + wobble, 30, 85 + wobble, 22, SSD1306_WHITE);
+  display.drawLine(78 + wobble, 22, 86 + wobble, 30, SSD1306_WHITE);
+
+  // Straight mouth 😐
+  display.drawLine(53, 46, 69, 46, SSD1306_WHITE);
+  display.drawLine(53, 47, 69, 47, SSD1306_WHITE);
+}
+
+void butterflyFace() {
+  normalEyes(blinkNow);
+  smileMouth(mouthWiggle);
+
+  int bx = 64 + sin(millis() / 300.0) * 18;
+  int by = 18 + cos(millis() / 300.0) * 6;
+
+  display.drawCircle(bx - 4, by, 3, SSD1306_WHITE);
+  display.drawCircle(bx + 4, by, 3, SSD1306_WHITE);
+  display.drawLine(bx, by, bx, by + 6, SSD1306_WHITE);
+}
+
+void exhaustedFace() {
+  normalEyes(blinkNow);
+  sadMouth(mouthWiggle);
+
+  int cx = 64;
+  int cy = 14;
+  int r = 10;
+  float a = millis() / 400.0;
+
+  int bx = cx + cos(a) * r;
+  int by = cy + sin(a) * r;
+
+  display.drawCircle(bx, by, 2, SSD1306_WHITE);
+}
+
+// ---------- NEW FACES ----------
+void cheerfulFace() {
+  lightRain();   // 🌧️ gentle happy rain
+
+  int bounceY = abs(sin(millis() / 180.0)) * 2;
+
+  /* ---- EYES (blink + joy) ---- */
+  if (!blinkNow) {
+    display.fillCircle(46, 26 + bounceY, 4, SSD1306_WHITE);
+    display.fillCircle(82, 26 + bounceY, 4, SSD1306_WHITE);
+  } else {
+    display.drawLine(42, 26 + bounceY, 50, 26 + bounceY, SSD1306_WHITE);
+    display.drawLine(78, 26 + bounceY, 86, 26 + bounceY, SSD1306_WHITE);
+  }
+
+  /* ---- BIG HAPPY CURVE MOUTH 😄 ---- */
+  int y = 44 + bounceY;
+
+  display.drawLine(52, y, 76, y, SSD1306_WHITE);
+  display.drawLine(54, y + 1, 74, y + 1, SSD1306_WHITE);
+  display.drawLine(56, y + 2, 72, y + 2, SSD1306_WHITE);
+
+  display.drawLine(50, y - 1, 52, y, SSD1306_WHITE);
+  display.drawLine(76, y, 78, y - 1, SSD1306_WHITE);
+}
+void cryingFace() {
+  normalEyes(blinkNow);
+  sadMouth(mouthWiggle);
+
+  int tearY = 30 + (millis() / 80) % 20;
+  display.drawLine(40, tearY, 40, tearY + 6, SSD1306_WHITE);
+  display.drawLine(88, tearY, 88, tearY + 6, SSD1306_WHITE);
+}
